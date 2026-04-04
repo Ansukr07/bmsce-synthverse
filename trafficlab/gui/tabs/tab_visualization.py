@@ -9,6 +9,7 @@ import math
 import re
 import xml.etree.ElementTree as ET
 import numpy as np
+from collections.abc import Mapping
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, 
                              QCheckBox, QSlider, QGroupBox, QProgressBar, 
@@ -26,6 +27,12 @@ from trafficlab.visualization.cctv_renderer import CCTRenderer, get_color_from_s
 from trafficlab.visualization.sat_renderer import SatRenderer
 from trafficlab.visualization.svg_parser import SVGLayoutParser
 from trafficlab.gui.views import SatGraphicsView, CCTVGraphicsView
+from modules.metrics import compute_metrics, detect_congestion
+from modules.state_manager import TrafficStateManager
+from modules.simulation import simulate_metrics, draw_comparison_overlay
+from modules.heatmap import generate_density_map, normalize_density_map, draw_heatmap
+from modules.incidents import IncidentDetector, draw_incidents
+from modules.recommendations import draw_recommendations
 
 # --- Constants ---
 OUTPUT_DIR = "output"
@@ -44,7 +51,25 @@ class VisualizationTab(QWidget):
         self.is_paused = True
         self.current_frame_idx = 0
         self.json_frame_map = {} 
+        self.json_metrics_map = {}
+        self.json_congestion_map = {}
         self.speed_display_cache = {} 
+        self.state_manager = TrafficStateManager(max_history=300)
+        self._last_state_frame_idx = -1
+
+        # Advanced feature states
+        self.replay_mode = False
+        self.replay_steps_back = 30
+        self.simulation_mode = False
+        self.simulation_action = "increase_green"
+
+        # New overlays
+        self.show_heatmap_overlay = False
+        self.show_incidents_overlay = False
+        self.show_recommendations_overlay = False
+        self.heatmap_grid_size = 50
+        self.recommendation_density_threshold = 0.6
+        self.incident_detector = IncidentDetector()
         
         # ROI
         self.roi_overlay_item = None
@@ -272,6 +297,65 @@ class VisualizationTab(QWidget):
         cctv_group.setLayout(cctv_layout)
         sidebar_layout.addWidget(cctv_group)
 
+        # Advanced feature controls (overlay-only)
+        adv_group = QGroupBox("Advanced Features")
+        adv_layout = QVBoxLayout()
+
+        self.chk_replay_mode = QCheckBox("Replay Past States")
+        self.chk_replay_mode.setChecked(False)
+        self.chk_replay_mode.toggled.connect(self.update_ui_state)
+        adv_layout.addWidget(self.chk_replay_mode)
+
+        replay_row = QHBoxLayout()
+        replay_row.addWidget(QLabel("Replay Steps:"))
+        self.spin_replay_steps = QSpinBox()
+        self.spin_replay_steps.setRange(1, 600)
+        self.spin_replay_steps.setValue(self.replay_steps_back)
+        self.spin_replay_steps.valueChanged.connect(self.update_ui_state)
+        replay_row.addWidget(self.spin_replay_steps)
+        adv_layout.addLayout(replay_row)
+
+        self.chk_simulation_mode = QCheckBox("What-if Simulation")
+        self.chk_simulation_mode.setChecked(False)
+        self.chk_simulation_mode.toggled.connect(self.update_ui_state)
+        adv_layout.addWidget(self.chk_simulation_mode)
+
+        sim_row = QHBoxLayout()
+        sim_row.addWidget(QLabel("Action:"))
+        self.combo_sim_action = QComboBox()
+        self.combo_sim_action.addItems(["increase_green", "reduce_flow"])
+        self.combo_sim_action.currentIndexChanged.connect(self.update_ui_state)
+        sim_row.addWidget(self.combo_sim_action)
+        adv_layout.addLayout(sim_row)
+
+        self.chk_heatmap_overlay = QCheckBox("Density Heatmap")
+        self.chk_heatmap_overlay.setChecked(False)
+        self.chk_heatmap_overlay.toggled.connect(self.update_ui_state)
+        adv_layout.addWidget(self.chk_heatmap_overlay)
+
+        hm_row = QHBoxLayout()
+        hm_row.addWidget(QLabel("Heatmap Grid:"))
+        self.spin_heatmap_grid = QSpinBox()
+        self.spin_heatmap_grid.setRange(20, 200)
+        self.spin_heatmap_grid.setSingleStep(10)
+        self.spin_heatmap_grid.setValue(self.heatmap_grid_size)
+        self.spin_heatmap_grid.valueChanged.connect(self.update_ui_state)
+        hm_row.addWidget(self.spin_heatmap_grid)
+        adv_layout.addLayout(hm_row)
+
+        self.chk_incidents_overlay = QCheckBox("Incident Overlay")
+        self.chk_incidents_overlay.setChecked(False)
+        self.chk_incidents_overlay.toggled.connect(self.update_ui_state)
+        adv_layout.addWidget(self.chk_incidents_overlay)
+
+        self.chk_recommendations_overlay = QCheckBox("Recommendations")
+        self.chk_recommendations_overlay.setChecked(False)
+        self.chk_recommendations_overlay.toggled.connect(self.update_ui_state)
+        adv_layout.addWidget(self.chk_recommendations_overlay)
+
+        adv_group.setLayout(adv_layout)
+        sidebar_layout.addWidget(adv_group)
+
         self.lbl_info = QLabel("Idle"); self.lbl_info.setWordWrap(True)
         sidebar_layout.addWidget(self.lbl_info)
         sidebar_layout.addStretch()
@@ -295,6 +379,9 @@ class VisualizationTab(QWidget):
             "5 — Toggle View Layout<br>"
             "6 — Toggle Vehicle SAT Coordinates<br>"
             "7 — Toggle Vehicle SAT Floor Box<br>"
+            "8 — Toggle Density Heatmap<br>"
+            "9 — Toggle Incident Overlay<br>"
+            "0 — Toggle Recommendations<br>"
             "F — Toggle FOV overlay on SAT map<br>"
         )
         self.btn_help = QToolButton()
@@ -345,6 +432,9 @@ class VisualizationTab(QWidget):
             mk(Qt.Key_6, lambda: self.chk_sat_coords.setChecked(not self.chk_sat_coords.isChecked()))
             # --- NEW: Shortcut 7 (Floor Box Toggle) ---
             mk(Qt.Key_7, lambda: self.chk_sat_box.setChecked(not self.chk_sat_box.isChecked()))
+            mk(Qt.Key_8, lambda: self.chk_heatmap_overlay.setChecked(not self.chk_heatmap_overlay.isChecked()))
+            mk(Qt.Key_9, lambda: self.chk_incidents_overlay.setChecked(not self.chk_incidents_overlay.isChecked()))
+            mk(Qt.Key_0, lambda: self.chk_recommendations_overlay.setChecked(not self.chk_recommendations_overlay.isChecked()))
             mk(Qt.Key_F, lambda: self.toggle_fov())
             
             # Frame jumps
@@ -458,6 +548,18 @@ class VisualizationTab(QWidget):
                     data = json.load(f)
             self.current_json_data = data
             self.json_frame_map = {f["frame_index"]: f["objects"] for f in data.get("frames", [])}
+
+            # Always recompute metrics so updated formulas apply to old replay files.
+            self.json_metrics_map = {}
+            self.json_congestion_map = {}
+            for frame_data in data.get("frames", []):
+                frame_index = frame_data.get("frame_index")
+                if frame_index is None:
+                    continue
+                objects = frame_data.get("objects", [])
+                metrics = compute_metrics(objects)
+                self.json_metrics_map[frame_index] = metrics
+                self.json_congestion_map[frame_index] = detect_congestion(metrics)
             
             # Check 3D availability - look for 'have_measurements' or presence of 'bbox_3d'
             self.has_3d_data = False
@@ -480,6 +582,9 @@ class VisualizationTab(QWidget):
             self.progress_bar.setRange(0, max_frames - 1)
             
             self.speed_display_cache = {}
+            self.state_manager.clear()
+            self._last_state_frame_idx = -1
+            self.incident_detector = IncidentDetector()
             self.is_paused = True
             self.update_frame()
             # Ensure CCTV view is fitted to the video after the first frame is drawn
@@ -866,6 +971,20 @@ class VisualizationTab(QWidget):
         self.face_opacity = self.slider_3d_alpha.value()
         self.show_label = self.chk_cctv_label.isChecked()
         self.show_roi = self.chk_roi.isChecked()
+
+        # Advanced replay/simulation states
+        self.replay_mode = self.chk_replay_mode.isChecked()
+        self.replay_steps_back = int(self.spin_replay_steps.value())
+        self.simulation_mode = self.chk_simulation_mode.isChecked()
+        self.simulation_action = str(self.combo_sim_action.currentText() or "increase_green")
+        self.show_heatmap_overlay = self.chk_heatmap_overlay.isChecked()
+        self.show_incidents_overlay = self.chk_incidents_overlay.isChecked()
+        self.show_recommendations_overlay = self.chk_recommendations_overlay.isChecked()
+        self.heatmap_grid_size = int(self.spin_heatmap_grid.value())
+
+        self.spin_replay_steps.setEnabled(self.replay_mode)
+        self.combo_sim_action.setEnabled(self.simulation_mode)
+        self.spin_heatmap_grid.setEnabled(self.show_heatmap_overlay or self.show_recommendations_overlay)
         
         # Toggle ROI overlay visibility
         if self.roi_overlay_item:
@@ -915,8 +1034,80 @@ class VisualizationTab(QWidget):
         if not ret: return
 
         objs = self.json_frame_map.get(self.current_frame_idx, [])
-        self.draw_cctv(frame, objs)
-        self.draw_sat(objs)
+        frame_metrics = self.json_metrics_map.get(self.current_frame_idx)
+        if frame_metrics is None:
+            frame_metrics = compute_metrics(objs)
+
+        frame_congestion = self.json_congestion_map.get(self.current_frame_idx)
+        if not frame_congestion:
+            frame_congestion = detect_congestion(frame_metrics)
+
+        # Keep a rolling history of states for replay-mode overlays.
+        if self.current_frame_idx != self._last_state_frame_idx:
+            self.state_manager.add_state(objs, frame_metrics)
+            self._last_state_frame_idx = self.current_frame_idx
+
+        overlay_objects = objs
+        overlay_metrics = frame_metrics
+        overlay_congestion = frame_congestion
+
+        if self.replay_mode:
+            past = self.state_manager.get_past_state(self.replay_steps_back)
+            if past is not None:
+                overlay_objects = past.get("tracks", objs)
+                overlay_metrics = past.get("metrics", frame_metrics)
+                overlay_congestion = detect_congestion(overlay_metrics)
+
+        sim_metrics = None
+        if self.simulation_mode and isinstance(overlay_metrics, Mapping):
+            sim_metrics = simulate_metrics(overlay_metrics, self.simulation_action)
+
+        density_map_norm = None
+        if self.show_heatmap_overlay or self.show_recommendations_overlay:
+            density_map = generate_density_map(frame.shape, overlay_objects, grid_size=self.heatmap_grid_size)
+            density_map_norm = normalize_density_map(density_map)
+
+        incidents = None
+        if self.show_incidents_overlay or self.show_recommendations_overlay:
+            incidents = self.incident_detector.process(overlay_objects)
+
+        recommendation_insights = None
+        if self.show_recommendations_overlay and isinstance(overlay_metrics, Mapping):
+            density_zones = []
+            if density_map_norm is not None and density_map_norm.size > 0:
+                hot_cells = np.argwhere(density_map_norm >= float(self.recommendation_density_threshold))
+                # Keep overlay readable and efficient by limiting highlighted zones.
+                for gy, gx in hot_cells[:60]:
+                    cx = int(gx * self.heatmap_grid_size + self.heatmap_grid_size / 2)
+                    cy = int(gy * self.heatmap_grid_size + self.heatmap_grid_size / 2)
+                    density_zones.append((cx, cy))
+
+            stopped_zones = []
+            if isinstance(incidents, Mapping):
+                for p in incidents.get("stopped_points", []) or []:
+                    try:
+                        stopped_zones.append((int(p.get("x", 0)), int(p.get("y", 0))))
+                    except Exception:
+                        pass
+
+            recommendation_insights = {
+                "density_zones": density_zones,
+                "stopped_zones": stopped_zones,
+                "avg_speed": float(overlay_metrics.get("avg_speed", 0.0)),
+                "vehicle_count": int(overlay_metrics.get("vehicle_count", len(overlay_objects))),
+            }
+
+        self.draw_cctv(
+            frame,
+            overlay_objects,
+            overlay_metrics,
+            overlay_congestion,
+            sim_metrics,
+            density_map_norm,
+            incidents,
+            recommendation_insights,
+        )
+        self.draw_sat(overlay_objects)
         self.progress_bar.setValue(self.current_frame_idx)
         
         if advance:
@@ -924,10 +1115,34 @@ class VisualizationTab(QWidget):
             t = time.time(); dt = t - self.last_real_time; self.last_real_time = t
             if dt > 0: self.actual_fps = 0.9 * self.actual_fps + 0.1*(1.0/dt)
         
-        self.lbl_info.setText(f"Frame: {self.current_frame_idx}/{max_f} | FPS: {self.actual_fps:.1f}")
+        mode_parts = []
+        if self.replay_mode:
+            mode_parts.append(f"Replay(-{self.replay_steps_back})")
+        if self.simulation_mode:
+            mode_parts.append(f"Sim({self.simulation_action})")
+        if self.show_heatmap_overlay:
+            mode_parts.append("Heatmap")
+        if self.show_incidents_overlay:
+            mode_parts.append("Incidents")
+        if self.show_recommendations_overlay:
+            mode_parts.append("Recommendations")
+        mode_str = " + ".join(mode_parts) if mode_parts else "Live"
+        self.lbl_info.setText(
+            f"Frame: {self.current_frame_idx}/{max_f} | FPS: {self.actual_fps:.1f} | Mode: {mode_str}"
+        )
 
     # --- DRAWING ---
-    def draw_cctv(self, frame, objects):
+    def draw_cctv(
+        self,
+        frame,
+        objects,
+        metrics=None,
+        congestion=None,
+        sim_metrics=None,
+        density_map=None,
+        incidents=None,
+        recommendation_insights=None,
+    ):
         # ROI mask blending (GUI-layer concern: checks roi_overlay_item Qt state)
         try:
             if getattr(self, 'roi_mask', None) is not None and self.show_roi:
@@ -951,6 +1166,70 @@ class VisualizationTab(QWidget):
                             frame[mask_bool] = fb.astype(np.uint8)
                     except Exception:
                         pass
+        except Exception:
+            pass
+
+        # New overlay modules (heatmap / incidents / recommendations).
+        try:
+            if self.show_heatmap_overlay and density_map is not None:
+                frame = draw_heatmap(frame, density_map, grid_size=self.heatmap_grid_size)
+
+            if self.show_incidents_overlay and incidents is not None:
+                frame = draw_incidents(frame, incidents)
+
+            if self.show_recommendations_overlay and recommendation_insights is not None:
+                frame = draw_recommendations(frame, recommendation_insights)
+        except Exception:
+            pass
+
+        # Replay/simulation overlays (drawn directly in OpenCV frame for guaranteed visibility).
+        try:
+            if sim_metrics is not None and isinstance(metrics, Mapping):
+                # In-place draw avoids one extra frame allocation in the hot path.
+                draw_comparison_overlay(frame, metrics, sim_metrics, inplace=True)
+
+            elif isinstance(metrics, Mapping):
+                vehicle_count = int(metrics.get("vehicle_count", len(objects)))
+                avg_speed = float(metrics.get("avg_speed", 0.0))
+                level = str(congestion or "LOW").upper()
+
+                level_color = (0, 255, 0)
+                if level == "HIGH":
+                    level_color = (0, 0, 255)
+                elif level == "MEDIUM":
+                    level_color = (0, 165, 255)
+
+                cv2.rectangle(frame, (8, 8), (365, 112), (0, 0, 0), -1)
+                cv2.putText(
+                    frame,
+                    f"Vehicles: {vehicle_count}",
+                    (16, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.9,
+                    (0, 255, 0),
+                    2,
+                    cv2.LINE_AA,
+                )
+                cv2.putText(
+                    frame,
+                    f"Avg Speed: {avg_speed:.2f}",
+                    (16, 72),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.9,
+                    (0, 255, 0),
+                    2,
+                    cv2.LINE_AA,
+                )
+                cv2.putText(
+                    frame,
+                    f"Congestion: {level}",
+                    (16, 104),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.9,
+                    level_color,
+                    2,
+                    cv2.LINE_AA,
+                )
         except Exception:
             pass
 
