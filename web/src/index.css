@@ -7,17 +7,17 @@
 
 :root {
   /* Colors */
-  --bg-base:       #0f172a; /* Slate 900 */
-  --bg-surface:    #1e293b; /* Slate 800 */
-  --bg-elevated:   #334155; /* Slate 700 */
-  --bg-card:       #1e293b;
-  --border:        #334155; /* Slate 700 */
-  --border-bright: #475569; /* Slate 600 */
+  --bg-base:       #0d0e12; 
+  --bg-surface:    #13141a; 
+  --bg-elevated:   #1a1b23; 
+  --bg-card:       #13141a;
+  --border:        #1c1d22; 
+  --border-bright: #2a2b36; 
   --border-glow:   transparent;
 
   /* Accent palette */
-  --cyan:          #6366f1; /* Changed to Indigo for primary actions */
-  --cyan-dim:      rgba(99, 102, 241, 0.1);
+  --cyan:          #8156e5; /* Purple primary */
+  --cyan-dim:      rgba(129, 86, 229, 0.1);
   --cyan-glow:     none;
   --violet:        #8b5cf6;
   --violet-dim:    rgba(139, 92, 246, 0.1);
@@ -49,8 +49,8 @@ html { scroll-behavior: smooth; }
 
 body {
   font-family: var(--font-body);
-  background: radial-gradient(circle at top right, #1e1b4b, #020617 40%, #0f172a 100%);
-  color: #f1f5f9; /* Slate 100 */
+  background: var(--bg-base);
+  color: #fff;
   min-height: 100vh;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
@@ -64,6 +64,59 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: #64748b; }
 
 /* ─── Layout ─────────────────────────────────────────────────── */
+
+.stakent-dashboard * {
+  box-sizing: border-box;
+}
+
+.stk-btn-secondary {
+  background: #111216;
+  border: 1px solid #222329;
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.stk-btn-secondary:hover { background: #1c1d22; }
+
+.stk-card {
+  background: #14151a;
+  border: 1px solid #1c1d22;
+  border-radius: 16px;
+}
+.stk-metric {
+  display: flex;
+  flex-direction: column;
+  padding-right: 24px;
+  border-right: 1px solid #222329;
+}
+.stk-metric:last-child { border-right: none; padding-right: 0; }
+.stk-metric .label {
+  font-size: 11px;
+  color: #8a8d9a;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.stk-metric .label span {
+  background: #222329;
+  padding: 2px 6px;
+  border-radius: 8px;
+  font-size: 9px;
+  color: #b4b7c5;
+}
+.stk-metric .value {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+}
 
 .app-shell {
   display: flex;
