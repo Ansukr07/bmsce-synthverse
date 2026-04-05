@@ -2,6 +2,9 @@ const DEFAULT_TTL_MS = 5 * 60 * 1000;
 const FILES_TTL_MS = 30 * 1000;
 
 export const DEFAULT_SAMPLE_STEP = 4;
+export const DEMO_LOCATION_CODES = ["SHARK", "SHINJUKU1"];
+
+const SELECTED_REPLAY_STORAGE_KEY = "trafficlab.selectedReplayPath";
 
 const filesCache = {
   expiresAt: 0,
@@ -37,6 +40,63 @@ function setCached(map, key, value, ttlMs) {
 
 function requestKey(prefix, path, sampleStep) {
   return `${prefix}|${path}|${sampleStep}`;
+}
+
+function normalizePath(path) {
+  return String(path || "")
+    .replace(/\\/g, "/")
+    .trim();
+}
+
+export function isDemoReplayPath(path) {
+  const normalized = normalizePath(path).toUpperCase();
+  if (!normalized) {
+    return false;
+  }
+  return DEMO_LOCATION_CODES.some((code) => normalized.includes(`/${code}/`));
+}
+
+export function filterDemoVisualizationFiles(files) {
+  const list = Array.isArray(files) ? files : [];
+  return list.filter((item) => isDemoReplayPath(item?.path));
+}
+
+export function getStoredReplayPath() {
+  try {
+    return normalizePath(
+      window.localStorage.getItem(SELECTED_REPLAY_STORAGE_KEY),
+    );
+  } catch {
+    return "";
+  }
+}
+
+export function persistSelectedReplayPath(path) {
+  const value = normalizePath(path);
+  try {
+    if (!value) {
+      window.localStorage.removeItem(SELECTED_REPLAY_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(SELECTED_REPLAY_STORAGE_KEY, value);
+  } catch {
+    // Ignore storage failures in restricted browser contexts.
+  }
+}
+
+export function resolveReplaySelection({ queryPath = "", files = [] } = {}) {
+  const list = filterDemoVisualizationFiles(files);
+  const allowed = new Set(list.map((item) => normalizePath(item.path)));
+  const q = normalizePath(queryPath);
+  if (q && allowed.has(q)) {
+    return q;
+  }
+
+  const stored = getStoredReplayPath();
+  if (stored && allowed.has(stored)) {
+    return stored;
+  }
+  return "";
 }
 
 async function fetchJson(url) {
@@ -77,7 +137,11 @@ export async function fetchVisualizationFiles({ force = false } = {}) {
 
 export async function fetchAnalytics(
   path,
-  { sampleStep = DEFAULT_SAMPLE_STEP, ttlMs = DEFAULT_TTL_MS, force = false } = {},
+  {
+    sampleStep = DEFAULT_SAMPLE_STEP,
+    ttlMs = DEFAULT_TTL_MS,
+    force = false,
+  } = {},
 ) {
   if (!path) {
     return null;
@@ -114,7 +178,11 @@ export async function fetchAnalytics(
 
 export async function fetchDisasterManagement(
   path,
-  { sampleStep = DEFAULT_SAMPLE_STEP, ttlMs = DEFAULT_TTL_MS, force = false } = {},
+  {
+    sampleStep = DEFAULT_SAMPLE_STEP,
+    ttlMs = DEFAULT_TTL_MS,
+    force = false,
+  } = {},
 ) {
   if (!path) {
     return null;
@@ -161,4 +229,30 @@ export function prefetchDisasterManagement(path, opts = {}) {
     return;
   }
   fetchDisasterManagement(path, opts).catch(() => {});
+}
+
+export function preloadDashboardData(path, opts = {}) {
+  if (!path) {
+    return;
+  }
+  prefetchAnalytics(path, opts);
+  prefetchDisasterManagement(path, opts);
+}
+
+export function preloadDemoDashboardData(selectedPath, files, opts = {}) {
+  const list = filterDemoVisualizationFiles(files);
+  if (!list.length) {
+    return;
+  }
+
+  const selected = normalizePath(selectedPath);
+  const paths = list.map((item) => normalizePath(item.path)).filter(Boolean);
+  const ordered =
+    selected && paths.includes(selected)
+      ? [selected, ...paths.filter((p) => p !== selected)]
+      : paths;
+
+  for (const path of ordered) {
+    preloadDashboardData(path, opts);
+  }
 }

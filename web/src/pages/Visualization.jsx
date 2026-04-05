@@ -1,4 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  DEFAULT_SAMPLE_STEP,
+  fetchVisualizationFiles,
+  filterDemoVisualizationFiles,
+  persistSelectedReplayPath,
+  preloadDemoDashboardData,
+  resolveReplaySelection,
+} from "../utils/visualizationApi";
 
 function BoolRow({ label, checked, onChange }) {
   return (
@@ -135,12 +143,14 @@ export default function Visualization() {
   }, [meta]);
 
   function fetchFiles() {
-    fetch("/api/visualization/files")
-      .then((r) => r.json())
+    fetchVisualizationFiles()
       .then((d) => {
-        const list = Array.isArray(d) ? d : [];
+        const list = filterDemoVisualizationFiles(d);
         setFiles(list);
-        if (!selectedPath && list.length > 0) setSelectedPath(list[0].path);
+        const initial = resolveReplaySelection({ files: list });
+        if (initial) {
+          setSelectedPath(initial);
+        }
       })
       .catch(() => {});
   }
@@ -160,6 +170,14 @@ export default function Visualization() {
   useEffect(() => {
     fetchFiles();
   }, []);
+
+  useEffect(() => {
+    if (!selectedPath) return;
+    persistSelectedReplayPath(selectedPath);
+    preloadDemoDashboardData(selectedPath, files, {
+      sampleStep: DEFAULT_SAMPLE_STEP,
+    });
+  }, [selectedPath, files]);
 
   useEffect(() => {
     if (!streaming) return;
@@ -368,9 +386,11 @@ export default function Visualization() {
                 value={selectedPath}
                 onChange={(e) => setSelectedPath(e.target.value)}
               >
-                {files.length === 0 && (
-                  <option value="">(no files found in output/)</option>
-                )}
+                <option value="">
+                  {files.length === 0
+                    ? "(no files found in output/)"
+                    : "Select location video..."}
+                </option>
                 {files.map((f, i) => (
                   <option key={f.path} value={f.path}>
                     {i + 1}: {f.path}

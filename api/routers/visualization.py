@@ -2,6 +2,7 @@ import os
 import re
 import json
 import gzip
+import zlib
 import time
 import math
 import hashlib
@@ -112,8 +113,27 @@ def _timeline_sample(timeline_full: list[dict], sample_step: int) -> list[dict]:
 
 def _load_replay(path: str) -> dict:
     if path.endswith(".gz"):
-        with gzip.open(path, "rt", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with gzip.open(path, "rt", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as gz_err:
+            # Some replay files can contain valid gzip members followed by trailing bytes.
+            # Fall back to first-member decompression so these files still load.
+            try:
+                with open(path, "rb") as bf:
+                    raw = bf.read()
+                dec = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                payload = dec.decompress(raw) + dec.flush()
+                return json.loads(payload.decode("utf-8"))
+            except Exception:
+                pass
+
+            # Last fallback: tolerate mislabeled .json.gz files that are plain JSON.
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                raise gz_err
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
