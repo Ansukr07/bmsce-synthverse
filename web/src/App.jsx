@@ -1,5 +1,5 @@
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom'
-import { Home, MapPin, Target, Zap, Activity, Brain, FileBarChart, Repeat, Droplets, Circle, AlertTriangle } from 'lucide-react'
+import { Home, MapPin, Target, Zap, Activity, Brain, FileBarChart, Repeat, Droplets, Circle, AlertTriangle, ChevronDown, Wallet, Bell, Search, Settings } from 'lucide-react'
 import Welcome from './pages/Welcome.jsx'
 import Location from './pages/Location.jsx'
 import Calibration from './pages/Calibration.jsx'
@@ -86,15 +86,32 @@ export default function App() {
       </aside>
 
       <main className="main-content">
-        <header className="page-header d-flex align-center justify-between">
-          <div>
-            <div className="page-title">
-              {ALL_NAV.find(n => n.to === location.pathname)?.label || 'Dashboard'}
+        <header className="page-header d-flex align-center justify-between" style={{ background: "#0b0c10", borderBottom: "1px solid #14151a", padding: "16px 24px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "24px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", background: "rgba(255,255,255,0.05)", padding: "4px 12px 4px 4px", borderRadius: "20px" }}>
+              <img src="https://i.pravatar.cc/100?img=33" alt="avatar" style={{ width: "24px", height: "24px", borderRadius: "50%" }} />
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                <div style={{ fontSize: "10px", color: "#8a8d9a" }}>@ryan.997 <span style={{ background: "#222329", padding: "2px 4px", borderRadius: "4px", fontSize: "8px", color: "#fff" }}>PRO</span></div>
+                <div style={{ fontSize: "12px", fontWeight: "600", color: "#fff" }}>Ryan Crawford <ChevronDown size={10} style={{ marginLeft: "4px" }} /></div>
+              </div>
             </div>
-            <div className="page-subtitle">TrafficLab Workspace</div>
+            <button style={{ background: "#efeaff", color: "#5b21b6", border: "none", padding: "8px 16px", borderRadius: "12px", fontWeight: "600", display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+              Deposit <Wallet size={14} />
+            </button>
           </div>
-          <div className="user-profile">
-            <span className="user-avatar">TL</span>
+          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <div style={{ position: "relative", width: "36px", height: "36px", borderRadius: "50%", background: "#111216", display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid #222329", color: "#8a8d9a", cursor: "pointer" }}>
+                <Bell size={16} />
+                <div style={{ position: "absolute", top: "6px", right: "8px", width: "6px", height: "6px", background: "#7c3aed", borderRadius: "50%" }} />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", background: "#111216", border: "1px solid #222329", padding: "8px 16px", borderRadius: "16px", color: "#8a8d9a" }}>
+                <Search size={16} /> <span style={{ fontSize: "12px" }}>Search..</span> <div style={{ background: "#222329", padding: "2px 6px", fontSize: "10px", borderRadius: "4px" }}>⌘K</div>
+              </div>
+              <button style={{ background: "#111216", border: "1px solid #222329", color: "#fff", padding: "8px 16px", borderRadius: "16px", fontSize: "12px", fontWeight: "500", display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+                Settings <Settings size={14} color="#8a8d9a" />
+              </button>
+            </div>
           </div>
         </header>
         <div className="page-body">
